@@ -53,6 +53,30 @@ fn user_prompt_urls_keep_destinations_across_widths() {
 }
 
 #[test]
+fn user_prompt_retains_terminal_background() {
+    let colors = crate::terminal_probe::DefaultColors {
+        fg: (0xff, 0xff, 0xff),
+        bg: (0x12, 0x34, 0x56),
+    };
+
+    crate::terminal_palette::with_test_default_colors(colors, || {
+        let cell = new_user_prompt(
+            "submitted prompt".to_string(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 3,
+        );
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new(cell.display_lines(area.width)).render(area, &mut buffer);
+
+        assert!(buffer.content.iter().all(|cell| cell.bg == Color::Reset));
+    });
+}
+
+#[test]
 fn local_image_only_user_message_remains_visible() {
     let cell = new_user_prompt(
         String::new(),

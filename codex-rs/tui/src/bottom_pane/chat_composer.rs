@@ -4800,7 +4800,7 @@ impl ChatComposer {
         if let Some((warning_area, line)) = warning_notice {
             line.render(warning_area, buf);
         }
-        let style = user_message_style();
+        let style = Style::default();
         Block::default().style(style).render(composer_rect, buf);
         if !remote_images_rect.is_empty() {
             let first = self
@@ -5046,10 +5046,7 @@ mod tests {
             let mut buffer = Buffer::empty(area);
             composer.render(area, &mut buffer);
 
-            assert_eq!(
-                buffer[(0, 1)].bg,
-                crate::terminal_palette::rgb_color((244, 244, 244))
-            );
+            assert_eq!(buffer[(0, 1)].bg, Color::Reset);
             insta::assert_snapshot!("light_terminal_palette_composer", format!("{buffer:?}"));
         });
     }
