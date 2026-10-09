@@ -61,17 +61,9 @@ pub fn user_message_style() -> Style {
     user_message_style_for(default_bg())
 }
 
-/// Submitted prompts use a lighter fill than the editable composer in either theme.
+/// Submitted prompts retain the terminal background.
 pub(crate) fn history_prompt_style() -> Style {
-    let Some(background) = default_bg() else {
-        return Style::default();
-    };
-    let (foreground, alpha) = if is_light(background) {
-        ((0, 0, 0), 0.02)
-    } else {
-        ((255, 255, 255), 0.16)
-    };
-    Style::default().bg(best_color(blend(foreground, background, alpha)))
+    Style::default()
 }
 
 pub fn proposed_plan_style() -> Style {
