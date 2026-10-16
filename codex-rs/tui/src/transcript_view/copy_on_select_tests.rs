@@ -1,4 +1,4 @@
-//! Automatic copies occur on release and may deselect only after confirmed delivery.
+//! Automatic copies deselect according to terminal policy and the user's explicit preference.
 
 use super::*;
 use crate::clipboard_copy::CopyStatus;
@@ -11,6 +11,7 @@ use crossterm::event::MouseButton;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use pretty_assertions::assert_eq;
+use ratatui::style::Modifier;
 use std::time::Instant;
 
 fn mouse(kind: MouseEventKind, column: u16) -> MouseEvent {
@@ -19,6 +20,150 @@ fn mouse(kind: MouseEventKind, column: u16) -> MouseEvent {
         column,
         row: 0,
         modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn herdr_mouse_drag_copies_both_endpoint_cells() {
+    for (text, width, from, to) in [
+        ("123", 8, (0, 0), (2, 0)),
+        ("123", 8, (2, 0), (0, 0)),
+        ("123", 8, (0, 0), (7, 0)),
+        ("1界3", 8, (0, 0), (3, 0)),
+        ("1界3", 8, (3, 0), (0, 0)),
+        ("1界", 8, (0, 0), (2, 0)),
+        ("1e\u{301}3", 8, (0, 0), (2, 0)),
+        ("1e\u{301}3", 8, (2, 0), (0, 0)),
+        ("123456", 3, (0, 0), (2, 1)),
+    ] {
+        let cells = vec![cell(text)];
+        let mut view = TranscriptView {
+            copy_on_select: true,
+            ..Default::default()
+        }
+        .with_herdr_mouse_selection(true);
+        render(&mut view, &cells, width, /*height*/ 3);
+        for (kind, (column, row)) in [
+            (MouseEventKind::Down(MouseButton::Left), from),
+            (MouseEventKind::Drag(MouseButton::Left), to),
+        ] {
+            view.handle_mouse(
+                MouseEvent {
+                    row,
+                    ..mouse(kind, column)
+                },
+                &cells,
+            );
+        }
+        let action = view.handle_mouse(
+            MouseEvent {
+                row: to.1,
+                ..mouse(MouseEventKind::Up(MouseButton::Left), to.0)
+            },
+            &cells,
+        );
+        let Some(ViewAction::CopyOnSelect(copied)) = action else {
+            panic!("drag must request an automatic copy");
+        };
+        assert_eq!(copied, text, "drag from {from:?} to {to:?}");
+    }
+}
+
+#[test]
+fn herdr_stationary_click_does_not_select_or_copy_text() {
+    let cells = vec![cell("123")];
+    let mut view = TranscriptView {
+        copy_on_select: true,
+        ..Default::default()
+    }
+    .with_herdr_mouse_selection(true);
+    render(&mut view, &cells, /*width*/ 8, /*height*/ 1);
+    view.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1), &cells);
+    assert!(view.selected_text(&cells).is_none());
+    assert!(matches!(
+        view.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 1), &cells),
+        Some(ViewAction::Changed)
+    ));
+    assert!(view.selected_text(&cells).is_none());
+}
+
+#[test]
+fn transcript_reset_preserves_herdr_mouse_selection_policy() {
+    let cells = vec![cell("123")];
+    let mut view = TranscriptView::default().with_herdr_mouse_selection(true);
+    render(&mut view, &cells, /*width*/ 8, /*height*/ 1);
+    view.begin_selection(&cells, /*column*/ 0, /*row*/ 0, /*clicks*/ 1);
+    view.extend_selection(/*column*/ 2, /*row*/ 0);
+    assert_eq!(view.selected_text(&cells).as_deref(), Some("123"));
+    view.reset();
+    assert!(view.herdr_mouse_selection);
+    assert!(view.selected_text(&cells).is_none());
+    render(&mut view, &cells, /*width*/ 8, /*height*/ 1);
+    view.begin_selection(&cells, /*column*/ 0, /*row*/ 0, /*clicks*/ 1);
+    view.extend_selection(/*column*/ 2, /*row*/ 0);
+    assert_eq!(view.selected_text(&cells).as_deref(), Some("123"));
+}
+
+#[test]
+fn herdr_auto_copy_clears_highlight_after_terminal_send() {
+    let cells = vec![cell("123")];
+    for clear_selection in [false, true] {
+        for asynchronous in [false, true] {
+            for result in [
+                Ok(CopyStatus::Confirmed),
+                Ok(CopyStatus::Unconfirmed),
+                Err("terminal write failed".to_string()),
+            ] {
+                let mut view = TranscriptView {
+                    copy_on_select: true,
+                    copy_on_select_clear_selection: clear_selection,
+                    ..Default::default()
+                }
+                .with_herdr_mouse_selection(true);
+                render(&mut view, &cells, /*width*/ 8, /*height*/ 1);
+                view.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0), &cells);
+                view.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 2), &cells);
+                let Some(action @ ViewAction::CopyOnSelect(_)) =
+                    view.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 2), &cells)
+                else {
+                    panic!("mouse release must request automatic copying");
+                };
+                let clear = view.selection_copy(&action).clear_selection();
+                let actual = view.copy_selected_text_with(&cells, "123", clear, |text, _| {
+                    assert_eq!(text, "123");
+                    if asynchronous {
+                        Ok(CopyStatus::Pending(7))
+                    } else {
+                        result.clone()
+                    }
+                });
+                if asynchronous {
+                    assert_eq!(actual, Ok(CopyStatus::Pending(7)));
+                    assert!(view.has_selection_range());
+                    assert_eq!(
+                        view.finish_copy(&cells, &(7, result.clone()), true),
+                        Some(false)
+                    );
+                } else {
+                    assert_eq!(actual, result);
+                }
+                let cleared = clear_selection
+                    && matches!(result, Ok(CopyStatus::Confirmed | CopyStatus::Unconfirmed));
+                assert_eq!(
+                    view.selected_text(&cells).as_deref(),
+                    (!cleared).then_some("123"),
+                    "clear={clear_selection}, async={asynchronous}, result={result:?}"
+                );
+                let buffer = render(&mut view, &cells, /*width*/ 8, /*height*/ 1);
+                let highlighted =
+                    (0..3).any(|column| buffer[(column, 0)].modifier.contains(Modifier::REVERSED));
+                assert_eq!(highlighted, !cleared);
+                assert_eq!(
+                    view.copy_feedback.as_ref().map(|feedback| feedback.result),
+                    Some(result.map_err(|_| ()))
+                );
+            }
+        }
     }
 }
 

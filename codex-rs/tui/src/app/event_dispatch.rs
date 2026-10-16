@@ -875,7 +875,7 @@ impl App {
                         self.transcript_cells.truncate(index);
                 self.native_history.retain(&self.transcript_cells);
                     }
-                    self.transcript_view = Default::default();
+                    self.transcript_view.reset();
                     self.scrollback_has_older_history = app_server.has_older_history(thread_id);
                     self.deferred_history_lines.clear();
                     self.last_rendered_history_tail = None;

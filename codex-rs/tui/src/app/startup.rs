@@ -919,7 +919,10 @@ See the Codex keymap documentation for supported actions and examples."
             transcript_cells: Vec::new(),
             native_history: Default::default(),
             turn_tips: Default::default(),
-            transcript_view: Default::default(),
+            transcript_view: crate::transcript_view::TranscriptView::default()
+                .with_herdr_mouse_selection(
+                    std::env::var("HERDR_ENV").is_ok_and(|value| value == "1"),
+                ),
             last_rendered_history_tail: None,
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
