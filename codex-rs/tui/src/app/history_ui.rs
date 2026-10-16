@@ -397,7 +397,7 @@ impl App {
         self.chat_widget.warning_display_state.synced_cells = None;
         self.native_history = Default::default();
         self.cancel_pending_key_chord();
-        self.transcript_view = Default::default();
+        self.transcript_view.reset();
         *self.chat_widget.rendered_selection.borrow_mut() = Default::default();
         self.last_rendered_history_tail = None;
         self.last_thread_usage_status_cell = None;

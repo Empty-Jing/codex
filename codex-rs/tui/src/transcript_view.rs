@@ -112,6 +112,8 @@ pub(crate) struct TranscriptView {
     pending_mouse_scroll: f64,
     pub(crate) copy_on_select: bool,
     pub(crate) copy_on_select_clear_selection: bool,
+    /// Match Herdr's cell selection and opt-in deselection after terminal copy requests.
+    pub(crate) herdr_mouse_selection: bool,
     pub(crate) primary_selection: bool,
     position: Position,
     follow_control: follow_control::FollowControl,
@@ -151,6 +153,7 @@ impl Default for TranscriptView {
             pending_mouse_scroll: 0.0,
             copy_on_select: false,
             copy_on_select_clear_selection: false,
+            herdr_mouse_selection: false,
             primary_selection: false,
             position: Position::Latest,
             follow_control: follow_control::FollowControl::default(),
@@ -186,6 +189,15 @@ impl Default for TranscriptView {
 }
 
 impl TranscriptView {
+    pub(crate) fn with_herdr_mouse_selection(mut self, enabled: bool) -> Self {
+        self.herdr_mouse_selection = enabled;
+        self
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default().with_herdr_mouse_selection(self.herdr_mouse_selection);
+    }
+
     /// Rows left after the last render, including all startup notices and live entries.
     /// Callers can paint temporary UI here without changing selection or saved history.
     pub(crate) fn remaining_area(&self) -> Rect {

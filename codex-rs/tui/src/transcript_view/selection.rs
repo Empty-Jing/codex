@@ -154,6 +154,14 @@ impl TranscriptView {
             offset: range.end,
             ..anchor
         };
+        let origin_end = if self.herdr_mouse_selection && unit == SelectionUnit::Character {
+            Anchor {
+                offset: self.mouse_cell_end(row, end.offset),
+                ..end
+            }
+        } else {
+            end
+        };
         let was_following = self.is_following();
         self.selection = Some(Selection {
             pending_copy: None,
@@ -161,7 +169,7 @@ impl TranscriptView {
             snapshot,
             start,
             end,
-            origin: (start, end),
+            origin: (start, origin_end),
             unit,
             preferred_column: None,
             dragging: true,
@@ -239,7 +247,10 @@ impl TranscriptView {
             selection.moved_vertically = false;
         }
         let cells = Arc::clone(&selection.snapshot.cells);
-        let range = selection.unit.range(layout.text(), end.offset);
+        let mut range = selection.unit.range(layout.text(), end.offset);
+        if self.herdr_mouse_selection && selection.unit == SelectionUnit::Character {
+            range.end = self.mouse_cell_end(row, range.end);
+        }
         let origin = selection.origin;
         let backwards = (self.resolve(&cells, end), end.offset)
             < (self.resolve(&cells, origin.0), origin.0.offset);
@@ -344,8 +355,13 @@ impl TranscriptView {
         }
     }
 
-    /// Deselect only after confirmed delivery when the current copy policy requests it.
-    /// Failures and unacknowledged terminal writes retain the selection.
+    /// Herdr's opt-in automatic deselection also accepts a successful terminal write.
+    /// Keep the unconfirmed feedback and retain the selection on actual copy errors.
+    fn clear_after_terminal_send(&self) -> bool {
+        self.herdr_mouse_selection && self.copy_on_select && self.copy_on_select_clear_selection
+    }
+
+    /// Apply the requested deselection policy without treating terminal sends as delivery receipts.
     pub(crate) fn copy_selected_text_with(
         &mut self,
         cells: &[Arc<dyn HistoryCell>],
@@ -402,6 +418,11 @@ impl TranscriptView {
                         self.jump_to_latest();
                     }
                 }
+            }
+            Ok(crate::clipboard_copy::CopyStatus::Unconfirmed)
+                if clear_selection && self.clear_after_terminal_send() =>
+            {
+                self.end_selection(cells);
             }
             Ok(crate::clipboard_copy::CopyStatus::Pending(id)) => {
                 if let Some(selection) = &mut self.selection {
@@ -532,8 +553,10 @@ impl TranscriptView {
             return None;
         }
         let characters = pending.characters;
+        let terminal_send = completion.1 == Ok(crate::clipboard_copy::CopyStatus::Unconfirmed)
+            && self.clear_after_terminal_send();
         if pending.clear_selection
-            && completion.1 == Ok(crate::clipboard_copy::CopyStatus::Confirmed)
+            && (completion.1 == Ok(crate::clipboard_copy::CopyStatus::Confirmed) || terminal_send)
         {
             self.end_selection(cells);
         }
@@ -715,6 +738,15 @@ impl TranscriptView {
                 visible.row,
             );
         }
+    }
+
+    fn mouse_cell_end(&self, row: u16, offset: usize) -> usize {
+        let row = row.saturating_sub(self.area.y) as usize;
+        self.visible
+            .get(row.min(self.visible.len().saturating_sub(1)))
+            .map_or(offset, |visible| {
+                visible.layout.after_cursor_grapheme(visible.row, offset)
+            })
     }
 
     pub(super) fn hit_test(&self, column: u16, row: u16) -> Option<(Anchor, Arc<TextLayout>)> {
